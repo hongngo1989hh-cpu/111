@@ -71,7 +71,7 @@ const smartInpaint = (
       
       // LOGIC: Only consider pixels that are "Light" (Background).
       // If a pixel is dark (ink/lines), ignore it so we don't smear gray lines.
-      // Threshold: Average brightness > 150 (out of 255)
+      // Threshold: Average brightness > 120 (out of 255)
       const brightness = (r + g + b) / 3;
       
       if (brightness > 120) {
@@ -100,6 +100,7 @@ const smartInpaint = (
 
 /**
  * Step 5b: Smart Write - Engineering Style Typography
+ * Updated to handle lists and paragraphs with alignment intelligence.
  */
 const drawAdaptiveText = (
   ctx: CanvasRenderingContext2D,
@@ -114,83 +115,104 @@ const drawAdaptiveText = (
   // Use Roboto Mono for numbers/technical look, Noto Sans SC for Chinese
   const fontFamily = "'Roboto Mono', 'Noto Sans SC', monospace"; 
 
+  // --- Alignment Detection ---
+  // If text has newlines, or starts with "1.", "-", or "•", treat it as a list/note -> Left Align
+  // Otherwise (short labels, titles) -> Center Align
+  const isListOrMultiLine = text.includes('\n') || /^\s*(\d+\.|-|•)/.test(text);
+  const alignment = isListOrMultiLine ? 'left' : 'center';
+
   let fontSize = maxFontSize;
-  let lines: string[] = [];
-  let lineHeight = 1.1; // Tight line height for technical drawings
+  let finalLines: string[] = [];
+  const lineHeightMultiplier = 1.2; // Slightly more breathing room for lists
   
-  // Iterative sizing loop
-  while (fontSize >= minFontSize) {
-    ctx.font = `${fontSize}px ${fontFamily}`;
-    const metrics = ctx.measureText(text);
+  // Helper to split text into wrapped lines for a given font size
+  const computeLines = (currentFontSize: number): string[] => {
+    ctx.font = `${currentFontSize}px ${fontFamily}`;
     
-    // Check single line fit
-    if (metrics.width <= w && fontSize * lineHeight <= h) {
-      lines = [text];
-      break; 
-    }
-    
-    // If we are getting small, try wrapping
-    if (fontSize <= maxFontSize * 0.8) {
-      const words = text.split(''); // Character split for Chinese/Mixed support
-      // Note: For pure English splitting by space is better, but char split is safer for mixed
-      // Let's stick to word split for now if space exists, else char split
-      const splitChar = text.includes(' ') ? ' ' : '';
-      const tokens = text.split(splitChar);
+    // 1. Split by explicit newlines (from API)
+    const paragraphs = text.split('\n'); 
+    const allWrappedLines: string[] = [];
+
+    for (const paragraph of paragraphs) {
+      if (!paragraph) {
+         // Preserve empty lines if necessary, but usually we skip them in drawings
+         continue; 
+      }
       
+      const words = paragraph.split(''); // Char split for CJK support mixed with English
+      // Optimization: For pure English sentences, word splitting is cleaner, but CJK needs char split.
+      // We use a simple tokenization strategy:
+      const tokens = paragraph.includes(' ') ? paragraph.split(' ') : paragraph.split('');
+      const separator = paragraph.includes(' ') ? ' ' : '';
+
       let currentLine = tokens[0];
-      const tempLines: string[] = [];
-      let validWrap = true;
       
       for (let i = 1; i < tokens.length; i++) {
         const token = tokens[i];
-        const testLine = currentLine + splitChar + token;
+        const testLine = currentLine + separator + token;
         const width = ctx.measureText(testLine).width;
         
-        if (width < w) {
+        if (width <= w) {
           currentLine = testLine;
         } else {
-          // If a single token is wider than box, this font size is invalid
+          // Check if single word is too wide (rare but possible)
           if (ctx.measureText(token).width > w) {
-             validWrap = false; break;
+             // If a single word is too big, this font size fails immediately
+             return []; 
           }
-          tempLines.push(currentLine);
+          allWrappedLines.push(currentLine);
           currentLine = token;
         }
       }
-      tempLines.push(currentLine);
-      
-      const totalHeight = tempLines.length * (fontSize * lineHeight);
-      
-      if (validWrap && totalHeight <= h) {
-        lines = tempLines;
-        break; 
+      allWrappedLines.push(currentLine);
+    }
+    return allWrappedLines;
+  };
+
+  // Iterative sizing loop
+  while (fontSize >= minFontSize) {
+    const lines = computeLines(fontSize);
+    
+    // Check if lines were successfully generated (no single word overflow)
+    if (lines.length > 0) {
+      const totalHeight = lines.length * (fontSize * lineHeightMultiplier);
+      if (totalHeight <= h) {
+        finalLines = lines;
+        break; // Found the largest size that fits
       }
     }
-
     fontSize--;
   }
 
-  // Fallback: Use minFontSize even if it overflows slightly
-  if (lines.length === 0) {
+  // Fallback: If text is too huge, use minFontSize and clip/draw anyway
+  if (finalLines.length === 0) {
     fontSize = minFontSize;
-    lines = [text]; // Just draw it, better than nothing
+    finalLines = computeLines(minFontSize);
+    // If computeLines failed due to width even at min size, force split by char (brute force)
+    if (finalLines.length === 0) {
+       finalLines = [text]; // Last resort: just draw raw text
+    }
   }
 
   // Draw the text
   ctx.font = `${fontSize}px ${fontFamily}`;
-  // Use a soft dark gray/blue instead of pure black for better integration
-  ctx.fillStyle = "#1f2937"; 
+  ctx.fillStyle = "#1f2937"; // Dark gray
   ctx.textBaseline = "middle";
-  ctx.textAlign = "center";
+  ctx.textAlign = alignment;
   
-  const totalTextBlockHeight = lines.length * (fontSize * lineHeight);
-  // Center vertically in the box
-  const startY = y + (h - totalTextBlockHeight) / 2 + (fontSize * lineHeight) / 2;
-  const centerX = x + w / 2;
+  const lineHeight = fontSize * lineHeightMultiplier;
+  const totalTextBlockHeight = finalLines.length * lineHeight;
+  
+  // Vertical Centering calculation
+  // Start drawing at: Y_center - Half_Total_Height + Half_First_Line_Height
+  const startY = y + (h - totalTextBlockHeight) / 2 + (lineHeight / 2);
+  
+  // Horizontal Position
+  const drawX = alignment === 'left' ? x : x + w / 2;
 
-  lines.forEach((line, index) => {
-    // Offset slightly for visual centering
-    ctx.fillText(line, centerX, startY + index * (fontSize * lineHeight) - (fontSize * 0.1));
+  finalLines.forEach((line, index) => {
+    // Add small adjustment to Y to correct visual baseline
+    ctx.fillText(line, drawX, startY + index * lineHeight - (fontSize * 0.1));
   });
 };
 

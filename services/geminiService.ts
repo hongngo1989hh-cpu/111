@@ -18,10 +18,11 @@ export const analyzeImage = async (
     1. Detect all text blocks in the provided technical drawing.
     2. Classify each block into one of two categories:
        - 'TECHNICAL': Pure numbers, measurements (e.g., "R15.5", "ø25.4", "120", "+/-0.1"), geometric symbols, reference codes (e.g., "A-A", "B"), or isolated single letters.
-       - 'TEXT': Descriptive words, sentences, titles, notes, and material names (e.g., "Steel", "Section View", "Note 1").
+       - 'TEXT': Descriptive words, sentences, titles, notes, technical requirements, and material names (e.g., "Steel", "Section View", "1. Hardness...").
     3. Translate the content to ${targetLang}:
        - If category is 'TECHNICAL': The 'translatedText' MUST BE IDENTICAL to 'originalText'. Do not translate or alter it.
-       - If category is 'TEXT': Translate the text naturally.
+       - If category is 'TEXT': Translate the text naturally. 
+         **CRITICAL FORMATTING RULE**: If the text contains a numbered list (e.g., "1. Condition A 2. Condition B") or multiple specifications, YOU MUST insert a newline character (\\n) between items. Do not merge them into a single paragraph. Keep the translation compact and aligned.
     4. Return the bounding box coordinates for each text block using the 0-1000 scale (ymin, xmin, ymax, xmax).
   `;
 
