@@ -32,7 +32,7 @@ const smartInpaint = (
   h: number,
   padding: number
 ) => {
-  // 1. Define the repair zone (slightly larger than the text box)
+  // 1. Define the repair zone
   const pad = padding; 
   const rx = Math.max(0, Math.floor(x - pad));
   const ry = Math.max(0, Math.floor(y - pad));
@@ -46,13 +46,6 @@ const smartInpaint = (
   // Safe bounds check
   const canvasWidth = ctx.canvas.width;
   const canvasHeight = ctx.canvas.height;
-  
-  // Logic: Extract colors from the immediate border of the box
-  // Calculate average color or mode color of the border
-  // This mimics "healing" by using surrounding context
-  
-  // Implementation detail: Simple average of border pixels for performance
-  let r = 0, g = 0, b = 0, count = 0;
   
   const getImageDataSafe = (sx: number, sy: number, sw: number, sh: number) => {
     if (sx < 0 || sy < 0 || sx + sw > canvasWidth || sy + sh > canvasHeight) return null;
@@ -68,10 +61,16 @@ const smartInpaint = (
   // Sample Right Border
   const rightData = getImageDataSafe(rx + rw, ry, sampleThickness, rh);
 
+  let r = 0, g = 0, b = 0, count = 0;
+
   const processData = (imgData: ImageData | null) => {
     if (!imgData) return;
     const data = imgData.data;
     for (let i = 0; i < data.length; i += 4) {
+      // Simple brightness check to ignore black lines when sampling background
+      // If pixel is very dark (likely a line), skip it for background color calculation
+      if (data[i] < 50 && data[i+1] < 50 && data[i+2] < 50) continue;
+      
       r += data[i];
       g += data[i + 1];
       b += data[i + 2];
@@ -89,17 +88,13 @@ const smartInpaint = (
     g = Math.round(g / count);
     b = Math.round(b / count);
   } else {
-    // Fallback to white if we can't sample (e.g. edge of image)
+    // Fallback to white if we can't sample (e.g. edge of image or only black lines found)
     r = 255; g = 255; b = 255;
   }
 
   // Fill the "wound" with the calculated background color
   ctx.fillStyle = `rgb(${r},${g},${b})`;
-  // We fill the padded rect to ensure clean edges
   ctx.fillRect(rx, ry, rw, rh);
-  
-  // Optional: Add a subtle blur or noise here to blend better? 
-  // For technical drawings, solid fill is usually cleaner than noisy fill.
 };
 
 /**
@@ -115,11 +110,12 @@ const drawAdaptiveText = (
   config: ProcessingConfig
 ) => {
   const { minFontSize, maxFontSize } = config;
-  const fontFamily = "Inter, sans-serif"; // Using Inter for readability
+  // Use Roboto Mono for engineering style, Noto Sans SC for Chinese support
+  const fontFamily = "'Roboto Mono', 'Noto Sans SC', monospace"; 
 
   let fontSize = maxFontSize;
   let lines: string[] = [];
-  let lineHeight = 1.2;
+  let lineHeight = 1.1; // Tighter line height for technical text
   
   // Iterative sizing loop
   while (fontSize >= minFontSize) {
@@ -133,7 +129,7 @@ const drawAdaptiveText = (
     }
     
     // If we are at minFontSize, or close to it, try wrapping
-    if (fontSize <= maxFontSize * 0.7 || fontSize === minFontSize) {
+    if (fontSize <= maxFontSize * 0.8 || fontSize === minFontSize) {
       const words = text.split(' ');
       let currentLine = words[0];
       const tempLines: string[] = [];
@@ -184,12 +180,17 @@ const drawAdaptiveText = (
 
   // Draw the text
   ctx.font = `${fontSize}px ${fontFamily}`;
-  ctx.fillStyle = "#000000"; // Assuming black text for drawings usually
+  ctx.fillStyle = "#1e293b"; // Slate-800, dark grey instead of pure black for better blend
   ctx.textBaseline = "middle";
   ctx.textAlign = "center";
   
+  // Accurate vertical centering
   const totalTextBlockHeight = lines.length * (fontSize * lineHeight);
-  const startY = y + (h - totalTextBlockHeight) / 2 + (fontSize * lineHeight) / 2;
+  // Correction factor: 0.5 * (totalHeight - singleLineHeightAdjustment)
+  // But textBaseline middle simplifies this. 
+  // We calculate the Y of the *middle* of the text block.
+  const blockCenterY = y + h / 2;
+  const startY = blockCenterY - (totalTextBlockHeight / 2) + ((fontSize * lineHeight) / 2);
   const centerX = x + w / 2;
 
   lines.forEach((line, index) => {
@@ -209,13 +210,11 @@ export const processCanvas = (
   const height = canvas.height;
 
   // Filter items to process:
-  // 1. Must be categorized as 'TEXT' (skips dimensions, codes, numbers)
-  // 2. AND the text must have actually changed (skips identical translations)
+  // 1. Must be categorized as 'TEXT'
+  // 2. AND the text must have actually changed
   const itemsToProcess = annotations.filter(item => {
-    // Safety check: if category is missing (legacy), fallback to string comparison
     if (item.category === 'TECHNICAL') return false;
     
-    // Normalize string to check for meaningful changes
     const original = item.originalText ? item.originalText.trim() : "";
     const translated = item.translatedText ? item.translatedText.trim() : "";
     
