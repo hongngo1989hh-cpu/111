@@ -1,17 +1,15 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { AnnotationItem, TargetLanguage } from "../types";
 
-const processEnvApiKey = process.env.API_KEY;
-
 export const analyzeImage = async (
   base64Image: string,
   targetLang: TargetLanguage
 ): Promise<AnnotationItem[]> => {
-  if (!processEnvApiKey) {
+  if (!process.env.API_KEY) {
     throw new Error("API Key is missing. Please set process.env.API_KEY.");
   }
 
-  const ai = new GoogleGenAI({ apiKey: processEnvApiKey });
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const prompt = `
     You are an expert technical drawing optical character recognition (OCR) and translation engine.
