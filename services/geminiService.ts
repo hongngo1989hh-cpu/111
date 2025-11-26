@@ -14,28 +14,15 @@ export const analyzeImage = async (
   const prompt = `
     You are an expert technical drawing optical character recognition (OCR) and translation engine.
     
-    CRITICAL INSTRUCTION: You must strictly distinguish between content that needs translation and content that MUST remain untouched to preserve the drawing's integrity.
-
     Task:
     1. Detect all text blocks in the provided technical drawing.
     2. Classify each block into one of two categories:
-       
-       CATEGORY 'TECHNICAL' (DO NOT TRANSLATE - Keep Original):
-       - All numbers, dimensions, tolerances (e.g., "R15.5", "ø25.4", "+/-0.1").
-       - Geometric symbols, single letter references (e.g., "A", "B").
-       - View labels and Section identifiers (e.g., "SECTION A-A", "DETAIL B", "View C") -> KEEP THESE ORIGINAL to avoid messing up the layout.
-       - Common standard labels that are not critical to the manufacturing process.
-       
-       CATEGORY 'TEXT' (TRANSLATE):
-       - Material specifications (e.g., "Aluminum 6061", "BK7 Glass", "Sapphire").
-       - Surface treatment and Processing requirements (e.g., "Polished", "Anodized", "Chamfer 0.5").
-       - Optical parameter descriptions (e.g., "Surface Flatness", "Scratch-Dig 60-40", "Coating").
-       - Technical notes and critical warnings.
-
+       - 'TECHNICAL': Pure numbers, measurements (e.g., "R15.5", "ø25.4", "120", "+/-0.1"), geometric symbols, reference codes (e.g., "A-A", "B"), or isolated single letters.
+       - 'TEXT': Descriptive words, sentences, titles, notes, and material names (e.g., "Steel", "Section View", "Note 1").
     3. Translate the content to ${targetLang}:
-       - If category is 'TECHNICAL': The 'translatedText' MUST BE IDENTICAL to 'originalText'.
-       - If category is 'TEXT': Translate the text accurately using technical engineering terminology.
-    4. Return the bounding box coordinates for each text block using the 0-1000 scale (ymin, xmin, ymax, xmax). Return TIGHT bounding boxes.
+       - If category is 'TECHNICAL': The 'translatedText' MUST BE IDENTICAL to 'originalText'. Do not translate or alter it.
+       - If category is 'TEXT': Translate the text naturally.
+    4. Return the bounding box coordinates for each text block using the 0-1000 scale (ymin, xmin, ymax, xmax).
   `;
 
   // Remove data URL prefix if present for the API call
