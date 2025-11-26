@@ -18,11 +18,11 @@ const denormalizeBox = (
 };
 
 /**
- * Step 5a: Advanced Erase / Smart Inpainting Simulation
- * Since we don't have OpenCV.inpaint in the browser without heavy WASM,
- * we perform a "Smart Background Fill" which samples the boundary pixels
- * of the text region to find the dominant background color, effectively
- * erasing the text on technical drawings (which usually have uniform backgrounds).
+ * Step 5a: Precision Inpainting (Background Recovery)
+ * 
+ * IMPROVED ALGORITHM:
+ * Instead of simply averaging all border pixels (which turns gray if a black line is nearby),
+ * we filter for "Light" pixels only. This assumes the paper background is lighter than the ink.
  */
 const smartInpaint = (
   ctx: CanvasRenderingContext2D,
@@ -32,78 +32,74 @@ const smartInpaint = (
   h: number,
   padding: number
 ) => {
-  // 1. Define the repair zone (slightly larger than the text box)
+  // 1. Define the repair zone
   const pad = padding; 
   const rx = Math.max(0, Math.floor(x - pad));
   const ry = Math.max(0, Math.floor(y - pad));
   const rw = Math.floor(w + pad * 2);
   const rh = Math.floor(h + pad * 2);
 
-  // Get image data for the surrounding area
-  // We sample a thin border AROUND the rect to determine background color
-  const sampleThickness = 4;
-  
   // Safe bounds check
   const canvasWidth = ctx.canvas.width;
   const canvasHeight = ctx.canvas.height;
   
-  // Logic: Extract colors from the immediate border of the box
-  // Calculate average color or mode color of the border
-  // This mimics "healing" by using surrounding context
+  // Sample a thin border AROUND the rect
+  const sampleThickness = 3; 
   
-  // Implementation detail: Simple average of border pixels for performance
-  let r = 0, g = 0, b = 0, count = 0;
+  let rSum = 0, gSum = 0, bSum = 0, count = 0;
   
   const getImageDataSafe = (sx: number, sy: number, sw: number, sh: number) => {
     if (sx < 0 || sy < 0 || sx + sw > canvasWidth || sy + sh > canvasHeight) return null;
     return ctx.getImageData(sx, sy, sw, sh);
   };
 
-  // Sample Top Border
-  const topData = getImageDataSafe(rx, ry - sampleThickness, rw, sampleThickness);
-  // Sample Bottom Border
-  const bottomData = getImageDataSafe(rx, ry + rh, rw, sampleThickness);
-  // Sample Left Border
-  const leftData = getImageDataSafe(rx - sampleThickness, ry, sampleThickness, rh);
-  // Sample Right Border
-  const rightData = getImageDataSafe(rx + rw, ry, sampleThickness, rh);
+  // Get samples from 4 sides
+  const samples = [
+    getImageDataSafe(rx, ry - sampleThickness, rw, sampleThickness), // Top
+    getImageDataSafe(rx, ry + rh, rw, sampleThickness),              // Bottom
+    getImageDataSafe(rx - sampleThickness, ry, sampleThickness, rh), // Left
+    getImageDataSafe(rx + rw, ry, sampleThickness, rh)               // Right
+  ];
 
   const processData = (imgData: ImageData | null) => {
     if (!imgData) return;
     const data = imgData.data;
     for (let i = 0; i < data.length; i += 4) {
-      r += data[i];
-      g += data[i + 1];
-      b += data[i + 2];
-      count++;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      
+      // LOGIC: Only consider pixels that are "Light" (Background).
+      // If a pixel is dark (ink/lines), ignore it so we don't smear gray lines.
+      // Threshold: Average brightness > 150 (out of 255)
+      const brightness = (r + g + b) / 3;
+      
+      if (brightness > 120) {
+        rSum += r;
+        gSum += g;
+        bSum += b;
+        count++;
+      }
     }
   };
 
-  processData(topData);
-  processData(bottomData);
-  processData(leftData);
-  processData(rightData);
+  samples.forEach(processData);
+
+  let finalR = 255, finalG = 255, finalB = 255;
 
   if (count > 0) {
-    r = Math.round(r / count);
-    g = Math.round(g / count);
-    b = Math.round(b / count);
-  } else {
-    // Fallback to white if we can't sample (e.g. edge of image)
-    r = 255; g = 255; b = 255;
+    finalR = Math.round(rSum / count);
+    finalG = Math.round(gSum / count);
+    finalB = Math.round(bSum / count);
   }
 
-  // Fill the "wound" with the calculated background color
-  ctx.fillStyle = `rgb(${r},${g},${b})`;
-  // We fill the padded rect to ensure clean edges
+  // Fill the "wound" with the calculated clean background color
+  ctx.fillStyle = `rgb(${finalR},${finalG},${finalB})`;
   ctx.fillRect(rx, ry, rw, rh);
-  
-  // Optional: Add a subtle blur or noise here to blend better? 
-  // For technical drawings, solid fill is usually cleaner than noisy fill.
 };
 
 /**
- * Step 5b: Smart Write - Adaptive Font Sizing & Wrapping
+ * Step 5b: Smart Write - Engineering Style Typography
  */
 const drawAdaptiveText = (
   ctx: CanvasRenderingContext2D,
@@ -115,11 +111,12 @@ const drawAdaptiveText = (
   config: ProcessingConfig
 ) => {
   const { minFontSize, maxFontSize } = config;
-  const fontFamily = "Inter, sans-serif"; // Using Inter for readability
+  // Use Roboto Mono for numbers/technical look, Noto Sans SC for Chinese
+  const fontFamily = "'Roboto Mono', 'Noto Sans SC', monospace"; 
 
   let fontSize = maxFontSize;
   let lines: string[] = [];
-  let lineHeight = 1.2;
+  let lineHeight = 1.1; // Tight line height for technical drawings
   
   // Iterative sizing loop
   while (fontSize >= minFontSize) {
@@ -132,68 +129,68 @@ const drawAdaptiveText = (
       break; 
     }
     
-    // If we are at minFontSize, or close to it, try wrapping
-    if (fontSize <= maxFontSize * 0.7 || fontSize === minFontSize) {
-      const words = text.split(' ');
-      let currentLine = words[0];
-      const tempLines: string[] = [];
+    // If we are getting small, try wrapping
+    if (fontSize <= maxFontSize * 0.8) {
+      const words = text.split(''); // Character split for Chinese/Mixed support
+      // Note: For pure English splitting by space is better, but char split is safer for mixed
+      // Let's stick to word split for now if space exists, else char split
+      const splitChar = text.includes(' ') ? ' ' : '';
+      const tokens = text.split(splitChar);
       
-      for (let i = 1; i < words.length; i++) {
-        const word = words[i];
-        const width = ctx.measureText(currentLine + " " + word).width;
+      let currentLine = tokens[0];
+      const tempLines: string[] = [];
+      let validWrap = true;
+      
+      for (let i = 1; i < tokens.length; i++) {
+        const token = tokens[i];
+        const testLine = currentLine + splitChar + token;
+        const width = ctx.measureText(testLine).width;
+        
         if (width < w) {
-          currentLine += " " + word;
+          currentLine = testLine;
         } else {
+          // If a single token is wider than box, this font size is invalid
+          if (ctx.measureText(token).width > w) {
+             validWrap = false; break;
+          }
           tempLines.push(currentLine);
-          currentLine = word;
+          currentLine = token;
         }
       }
       tempLines.push(currentLine);
       
       const totalHeight = tempLines.length * (fontSize * lineHeight);
       
-      if (totalHeight <= h) {
+      if (validWrap && totalHeight <= h) {
         lines = tempLines;
-        break; // Found a valid wrap configuration
+        break; 
       }
     }
 
     fontSize--;
   }
 
-  // If even minFontSize didn't fit perfectly, we strictly clamp to minFontSize and use the wrap calculated
+  // Fallback: Use minFontSize even if it overflows slightly
   if (lines.length === 0) {
     fontSize = minFontSize;
-    ctx.font = `${fontSize}px ${fontFamily}`;
-     const words = text.split(' ');
-      let currentLine = words[0] || text;
-      lines = [];
-      
-      for (let i = 1; i < words.length; i++) {
-        const word = words[i];
-        const width = ctx.measureText(currentLine + " " + word).width;
-        if (width < w) {
-          currentLine += " " + word;
-        } else {
-          lines.push(currentLine);
-          currentLine = word;
-        }
-      }
-      lines.push(currentLine);
+    lines = [text]; // Just draw it, better than nothing
   }
 
   // Draw the text
   ctx.font = `${fontSize}px ${fontFamily}`;
-  ctx.fillStyle = "#000000"; // Assuming black text for drawings usually
+  // Use a soft dark gray/blue instead of pure black for better integration
+  ctx.fillStyle = "#1f2937"; 
   ctx.textBaseline = "middle";
   ctx.textAlign = "center";
   
   const totalTextBlockHeight = lines.length * (fontSize * lineHeight);
+  // Center vertically in the box
   const startY = y + (h - totalTextBlockHeight) / 2 + (fontSize * lineHeight) / 2;
   const centerX = x + w / 2;
 
   lines.forEach((line, index) => {
-    ctx.fillText(line, centerX, startY + index * (fontSize * lineHeight));
+    // Offset slightly for visual centering
+    ctx.fillText(line, centerX, startY + index * (fontSize * lineHeight) - (fontSize * 0.1));
   });
 };
 
@@ -208,29 +205,29 @@ export const processCanvas = (
   const width = canvas.width;
   const height = canvas.height;
 
-  // Filter items to process:
-  // 1. Must be categorized as 'TEXT' (skips dimensions, codes, numbers)
-  // 2. AND the text must have actually changed (skips identical translations)
+  // Filter items to process
   const itemsToProcess = annotations.filter(item => {
-    // Safety check: if category is missing (legacy), fallback to string comparison
+    // 1. Strictly ignore TECHNICAL items
     if (item.category === 'TECHNICAL') return false;
     
-    // Normalize string to check for meaningful changes
+    // 2. Ignore if text hasn't changed (preserving original pixels is always better)
     const original = item.originalText ? item.originalText.trim() : "";
     const translated = item.translatedText ? item.translatedText.trim() : "";
+    if (original === translated) return false;
+
+    // 3. Ignore empty translations
+    if (!translated) return false;
     
-    return original !== translated;
+    return true;
   });
 
-  // 1. Iteration Pass: Inpaint (Erase)
-  // We do this first for all blocks so text doesn't get erased by overlapping boxes
+  // Pass 1: Precision Inpaint
   itemsToProcess.forEach((item) => {
     const coords = denormalizeBox(item.box_2d, width, height);
-    // Expand box slightly for cleaner erase (Dilation)
     smartInpaint(ctx, coords.x, coords.y, coords.w, coords.h, config.padding);
   });
 
-  // 2. Iteration Pass: Write Translated Text
+  // Pass 2: Engineering Write
   itemsToProcess.forEach((item) => {
     const coords = denormalizeBox(item.box_2d, width, height);
     drawAdaptiveText(

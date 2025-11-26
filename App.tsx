@@ -33,6 +33,15 @@ const App: React.FC = () => {
     }
   };
 
+  const handleDownload = () => {
+      if (resultCanvasRef.current) {
+          const link = document.createElement('a');
+          link.download = 'techdraw-translated.png';
+          link.href = resultCanvasRef.current.toDataURL('image/png');
+          link.click();
+      }
+  };
+
   // Draw initial image to canvases
   useEffect(() => {
     if (imageSrc && originalCanvasRef.current && resultCanvasRef.current) {
@@ -111,6 +120,7 @@ const App: React.FC = () => {
           setTargetLang={setTargetLang}
           onProcess={handleProcess}
           onUpload={handleUpload}
+          onDownload={handleDownload}
           hasImage={!!imageSrc}
         />
 
