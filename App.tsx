@@ -59,18 +59,6 @@ const App: React.FC = () => {
     }
   }, [imageSrc]);
 
-  // Handle Download
-  const handleDownload = () => {
-    if (resultCanvasRef.current) {
-      const link = document.createElement('a');
-      link.download = `translated_techdraw_${Date.now()}.png`;
-      link.href = resultCanvasRef.current.toDataURL('image/png');
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
-  };
-
   // Main Processing Workflow
   const handleProcess = async () => {
     if (!imageSrc) return;
@@ -122,7 +110,6 @@ const App: React.FC = () => {
           targetLang={targetLang}
           setTargetLang={setTargetLang}
           onProcess={handleProcess}
-          onDownload={handleDownload}
           onUpload={handleUpload}
           hasImage={!!imageSrc}
         />
